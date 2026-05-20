@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+    ========================================
+    C_SQL - Burp Suite SQL 注入被动扫描插件
+    使用 Montoya API 构建
+    ========================================
+    -->
+    <groupId>com.csql</groupId>
+    <artifactId>C_SQL</artifactId>
+    <version>3.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>C_SQL Scanner</name>
+    <description>Burp Suite SQL 注入被动扫描插件 - 基于 Montoya API</description>
+
+    <properties>
+        <!-- 项目编码设置 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- Java 版本 -->
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+
+        <!-- Montoya API 版本 - 使用最新版 2025.2 -->
+        <montoya.api.version>2025.2</montoya.api.version>
+    </properties>
+
+    <dependencies>
+        <!--
+        Burp Suite Montoya API
+        这是 Burp Suite 官方提供的最新 API，用于替代旧版 IBurpExtenderCallbacks
+        -->
+        <dependency>
+            <groupId>net.portswigger.burp.extensions</groupId>
+            <artifactId>montoya-api</artifactId>
+            <version>${montoya.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!--
+        SnakeYAML - YAML 解析库
+        用于读取和保存配置文件
+        -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>2.2</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Maven 编译插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+
+            <!--
+            Maven Shade 插件
+            用于打包所有依赖到单个 JAR 文件中
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <!-- 生成的最终 JAR 文件名 -->
+                            <finalName>C_SQL-${project.version}-with-dependencies</finalName>
+                            <transformers>
+                                <!-- 指定插件入口类 -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.csql.extension.CSqlExtension</mainClass>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,87 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# Java and Maven build outputs
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+*.ear
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.seed
+*.tmp
+*.temp
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+*.local.*
+
+# Credentials, secrets, certificates, and keys
+*secret*
+*secrets*
+*credential*
+*credentials*
+*token*
+*apikey*
+*api_key*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Local config files that may contain private targets or credentials
+*.properties
+*.conf
+*.cfg
+*.ini
+*.yaml.local
+*.yml.local
+application-*.yml
+application-*.yaml
+application-*.properties
+config.local.*
+
+# Burp Suite local data and exports
+*.burp
+*.burpstate
+*.burpbackup
+*.har
+
+# Dependency and tool caches
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+.gradle/
+.cache/
+
+# Test and coverage output
+coverage/
+reports/
+surefire-reports/
+failsafe-reports/
