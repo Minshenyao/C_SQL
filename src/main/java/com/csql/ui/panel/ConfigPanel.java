@@ -148,8 +148,19 @@ public class ConfigPanel {
         domainTextField.setMinimumSize(fixedSize);
         domainTextField.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JButton whitelistButton = new JButton("启动白名单");
-        JButton blacklistButton = new JButton("启动黑名单");
+        // 初始化域名输入框内容
+        if (config.isBlacklistEnabled()) {
+            domainTextField.setText(config.getBlacklistUrls());
+            domainTextField.setEditable(false);
+            domainTextField.setForeground(Color.GRAY);
+        } else if (config.isWhitelistEnabled()) {
+            domainTextField.setText(config.getWhitelistUrls());
+            domainTextField.setEditable(false);
+            domainTextField.setForeground(Color.GRAY);
+        }
+
+        JButton whitelistButton = new JButton(config.isWhitelistEnabled() ? "关闭白名单" : "启动白名单");
+        JButton blacklistButton = new JButton(config.isBlacklistEnabled() ? "关闭黑名单" : "启动黑名单");
         JPanel listModePanel = new JPanel(new GridLayout(1, 2, 18, 0));
         listModePanel.add(whitelistButton);
         listModePanel.add(blacklistButton);

