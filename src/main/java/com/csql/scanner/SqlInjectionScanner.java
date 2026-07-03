@@ -19,11 +19,11 @@ import com.csql.util.Md5Util;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.*;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,9 +71,28 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
     private final CopyOnWriteArrayList<ScanResult> allResults = new CopyOnWriteArrayList<>();
 
     /**
-     * 已扫描请求的 MD5 缓存（用于去重）
+     * 已扫描请求的 LRU 缓存（用于去重，最多缓存 10000 条）
      */
-    private final Set<String> scannedRequestCache = new HashSet<>();
+    private final Map<String, Long> scannedRequestCache = Collections.synchronizedMap(
+            new LinkedHashMap<String, Long>(1000, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+                    // 保留最近 10000 条记录，超过则删除最老的
+                    return size() > 10000;
+                }
+            }
+    );
+
+    /**
+     * 请求速率限制器（令牌桶算法）
+     * 默认每秒最多 10 个请求，避免触发 WAF
+     */
+    private final Semaphore rateLimiter = new Semaphore(10);
+
+    /**
+     * 速率限制器刷新线程
+     */
+    private final Thread rateLimiterRefreshThread;
 
     /**
      * 扫描计数器（原子操作保证线程安全）
@@ -104,6 +123,24 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         this.api = api;
         this.config = config;
         this.logging = api.logging();
+
+        // 启动速率限制器刷新线程（每 100ms 释放一个令牌，实现每秒 10 个请求）
+        rateLimiterRefreshThread = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(100); // 每 100ms 释放一个令牌
+                    if (rateLimiter.availablePermits() < 10) {
+                        rateLimiter.release();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+        rateLimiterRefreshThread.setDaemon(true);
+        rateLimiterRefreshThread.setName("C_SQL-RateLimiter");
+        rateLimiterRefreshThread.start();
     }
 
     /**
@@ -315,10 +352,10 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
 
         // 检查是否已扫描过（手动触发的除外）
         synchronized (scannedRequestCache) {
-            if (scannedRequestCache.contains(requestMd5) && !"Extension".equals(toolSource)) {
+            if (scannedRequestCache.containsKey(requestMd5) && !"Extension".equals(toolSource)) {
                 return;
             }
-            scannedRequestCache.add(requestMd5);
+            scannedRequestCache.put(requestMd5, System.currentTimeMillis());
         }
 
         // 如果没有可测试的参数，直接返回
@@ -369,14 +406,8 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
             String paramName = param.name();
             String paramValue = param.value();
 
-            // 获取要使用的 Payload 列表
-            List<String> payloads = config.getEffectivePayloads();
-
-            // 如果启用了数字参数测试，对纯数字参数添加额外 Payload
-            if (config.isTestNumericParams() && paramValue.matches("[0-9]+")) {
-                payloads.add("-1");
-                payloads.add("-0");
-            }
+            // 获取要使用的 Payload 列表（分级优化）
+            List<String> payloads = getOptimizedPayloads(paramValue);
 
             // 用于比较响应长度的基准值
             int baselineResponseLength = 0;
@@ -385,6 +416,17 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
 
             // 遍历 Payload 进行测试
             for (String payload : payloads) {
+                // 应用速率限制
+                try {
+                    if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
+                        logging.logToError("速率限制：等待令牌超时，跳过该 Payload");
+                        continue;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+
                 // 请求延迟
                 delayBetweenRequests();
 
@@ -688,5 +730,77 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         scanCounter.set(0);
         notifyTasksChanged();
         notifyResultsChanged();
+    }
+
+    // ==================== Payload 优化逻辑 ====================
+
+    /**
+     * 获取优化后的 Payload 列表（分级测试）
+     * 优先级：基础测试 -> 布尔盲注 -> 报错注入 -> 时间盲注
+     *
+     * @param paramValue 参数值
+     * @return 优化后的 Payload 列表
+     */
+    private List<String> getOptimizedPayloads(String paramValue) {
+        List<String> optimizedPayloads = new ArrayList<>();
+        List<String> allPayloads = config.getEffectivePayloads();
+
+        // 第一级：基础语法测试（优先级最高）
+        List<String> basicPayloads = Arrays.asList("'", "\"", "`", "')", "\")", "`)", "'))", "\"))", "`))");
+
+        // 第二级：布尔盲注
+        List<String> booleanPayloads = Arrays.asList(
+                "'%20AND%20'1'='1", "'%20AND%20'1'='2",
+                "\"%20AND%20\"1\"=\"1", "\"%20AND%20\"1\"=\"2",
+                "'%20OR%20'1'='1", "'%20OR%20'1'='2"
+        );
+
+        // 第三级：联合查询和报错注入
+        List<String> unionAndErrorPayloads = new ArrayList<>();
+        for (String payload : allPayloads) {
+            if (payload.contains("UNION") || payload.contains("ORDER BY") ||
+                    payload.contains("extractvalue") || payload.contains("convert") ||
+                    payload.contains("cast") || payload.contains("utl_inaddr")) {
+                unionAndErrorPayloads.add(payload);
+            }
+        }
+
+        // 第四级：时间盲注（最慢，最后测试）
+        List<String> timeBasedPayloads = new ArrayList<>();
+        for (String payload : allPayloads) {
+            if (payload.contains("SLEEP") || payload.contains("WAITFOR") ||
+                    payload.contains("pg_sleep") || payload.contains("DBMS_LOCK")) {
+                timeBasedPayloads.add(payload);
+            }
+        }
+
+        // 按优先级添加
+        for (String payload : allPayloads) {
+            if (basicPayloads.contains(payload)) {
+                optimizedPayloads.add(payload);
+            }
+        }
+        for (String payload : allPayloads) {
+            if (booleanPayloads.contains(payload)) {
+                optimizedPayloads.add(payload);
+            }
+        }
+        optimizedPayloads.addAll(unionAndErrorPayloads);
+        optimizedPayloads.addAll(timeBasedPayloads);
+
+        // 添加其他未分类的 Payload
+        for (String payload : allPayloads) {
+            if (!optimizedPayloads.contains(payload)) {
+                optimizedPayloads.add(payload);
+            }
+        }
+
+        // 如果启用了数字参数测试，对纯数字参数添加额外 Payload
+        if (config.isTestNumericParams() && paramValue.matches("[0-9]+")) {
+            optimizedPayloads.add("-1");
+            optimizedPayloads.add("-0");
+        }
+
+        return optimizedPayloads;
     }
 }
