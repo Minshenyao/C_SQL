@@ -21,9 +21,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -95,9 +93,24 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
     private final Thread rateLimiterRefreshThread;
 
     /**
+     * 扫描线程池（可取消所有任务）
+     */
+    private volatile ExecutorService scanExecutor;
+
+    /**
      * 扫描计数器（原子操作保证线程安全）
      */
     private final AtomicInteger scanCounter = new AtomicInteger(0);
+
+    /**
+     * 进度统计：当前所有活跃任务的总 Payload 数
+     */
+    private final AtomicInteger totalPayloads = new AtomicInteger(0);
+
+    /**
+     * 进度统计：已完成发送的 Payload 数
+     */
+    private final AtomicInteger completedPayloads = new AtomicInteger(0);
 
     /**
      * 数据变更监听器列表
@@ -111,6 +124,8 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         void onTasksChanged();
         void onResultsChanged();
         void onLogMessage(String message);
+        /** 进度更新：completed 已完成 payload 数，total 总 payload 数 */
+        void onProgressChanged(int completed, int total);
     }
 
     /**
@@ -123,6 +138,9 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         this.api = api;
         this.config = config;
         this.logging = api.logging();
+
+        // 初始化扫描线程池
+        this.scanExecutor = createScanExecutor();
 
         // 启动速率限制器刷新线程（每 100ms 释放一个令牌，实现每秒 10 个请求）
         rateLimiterRefreshThread = new Thread(() -> {
@@ -141,6 +159,22 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         rateLimiterRefreshThread.setDaemon(true);
         rateLimiterRefreshThread.setName("C_SQL-RateLimiter");
         rateLimiterRefreshThread.start();
+    }
+
+    /**
+     * 创建扫描线程池
+     */
+    private ExecutorService createScanExecutor() {
+        return new ThreadPoolExecutor(
+                2, 15, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(500),
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true);
+                    t.setName("C_SQL-Scanner");
+                    return t;
+                }
+        );
     }
 
     /**
@@ -176,6 +210,17 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
     private void notifyLogMessage(String message) {
         for (DataChangeListener listener : listeners) {
             listener.onLogMessage(message);
+        }
+    }
+
+    /**
+     * 通知进度变更
+     */
+    private void notifyProgressChanged() {
+        int completed = completedPayloads.get();
+        int total = totalPayloads.get();
+        for (DataChangeListener listener : listeners) {
+            SwingUtilities.invokeLater(() -> listener.onProgressChanged(completed, total));
         }
     }
 
@@ -230,16 +275,18 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
                 responseReceived
         );
 
-        // 在新线程中执行扫描，避免阻塞 Burp 主线程
-        Thread scanThread = new Thread(() -> {
-            try {
-                performScan(requestResponse, toolType.toolName());
-            } catch (Exception e) {
-                logging.logToError("扫描时发生错误: " + e.getMessage());
-            }
-        });
-        scanThread.setName("C_SQL-Scanner-" + scanCounter.get());
-        scanThread.start();
+        // 提交到线程池执行扫描，避免阻塞 Burp 主线程
+        try {
+            scanExecutor.submit(() -> {
+                try {
+                    performScan(requestResponse, toolType.toolName());
+                } catch (Exception e) {
+                    logging.logToError("扫描时发生错误: " + e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // 线程池已关闭（取消状态），忽略
+        }
 
         return ResponseReceivedAction.continueWith(responseReceived);
     }
@@ -266,16 +313,18 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
                 List<HttpRequestResponse> selectedItems = event.selectedRequestResponses();
 
                 if (!selectedItems.isEmpty() && config.isPluginEnabled()) {
-                    // 在新线程中执行扫描
-                    Thread scanThread = new Thread(() -> {
-                        try {
-                            performScan(selectedItems.get(0), "Extension");
-                        } catch (Exception ex) {
-                            logging.logToError("手动扫描时发生错误: " + ex.getMessage());
-                        }
-                    });
-                    scanThread.setName("C_SQL-ManualScan");
-                    scanThread.start();
+                    // 提交到线程池执行扫描
+                    try {
+                        scanExecutor.submit(() -> {
+                            try {
+                                performScan(selectedItems.get(0), "Extension");
+                            } catch (Exception ex) {
+                                logging.logToError("手动扫描时发生错误: " + ex.getMessage());
+                            }
+                        });
+                    } catch (RejectedExecutionException ex) {
+                        // 线程池已关闭（取消状态），忽略
+                    }
                 }
             });
 
@@ -385,13 +434,28 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         scanTasks.add(task);
         notifyTasksChanged();
 
+        // 预计算该任务总 Payload 数，用于进度条
+        int taskTotalPayloads = 0;
+        for (ParsedHttpParameter p : parameters) {
+            HttpParameterType t = p.type();
+            if (t == HttpParameterType.URL || t == HttpParameterType.BODY
+                    || t == HttpParameterType.JSON
+                    || (t == HttpParameterType.COOKIE && config.isTestCookieParams())) {
+                taskTotalPayloads += getOptimizedPayloads(p.value()).size();
+            }
+        }
+        totalPayloads.addAndGet(taskTotalPayloads);
+        notifyProgressChanged();
+
         // 状态标记（使用布尔标志避免重复）
         boolean hasVulnerability = false;  // 发现可能的注入点
         boolean hasHttp500 = false;        // 有 500 错误
         boolean hasErrorPattern = false;   // 匹配到报错关键词
         boolean hasTMarker = false;        // 单引号500双引号不500
+        boolean wasCancelled = false;      // 任务被取消
 
         // 遍历参数进行测试
+        outer:
         for (ParsedHttpParameter param : parameters) {
             HttpParameterType paramType = param.type();
 
@@ -416,19 +480,34 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
 
             // 遍历 Payload 进行测试
             for (String payload : payloads) {
+                // 检查线程是否已被中断（clearAll 或关闭插件触发）
+                if (Thread.currentThread().isInterrupted()) {
+                    wasCancelled = true;
+                    break outer;
+                }
+
                 // 应用速率限制
                 try {
                     if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
                         logging.logToError("速率限制：等待令牌超时，跳过该 Payload");
+                        completedPayloads.incrementAndGet();
+                        notifyProgressChanged();
                         continue;
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    break;
+                    wasCancelled = true;
+                    break outer;
                 }
 
                 // 请求延迟
                 delayBetweenRequests();
+
+                // 再次检查中断（delay 中可能被 interrupt）
+                if (Thread.currentThread().isInterrupted()) {
+                    wasCancelled = true;
+                    break outer;
+                }
 
                 // 确定实际发送的参数值
                 String valueForSend = paramValue;
@@ -458,6 +537,10 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
                 HttpRequestResponse attackResponse = api.http().sendRequest(attackRequest);
                 long endTime = System.currentTimeMillis();
                 int responseTime = (int) (endTime - startTime);
+
+                // 更新进度
+                completedPayloads.incrementAndGet();
+                notifyProgressChanged();
 
                 // 获取响应状态码
                 int statusCode = 0;
@@ -551,7 +634,7 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
         }
 
         // 更新任务状态（简洁显示）
-        StringBuilder finalState = new StringBuilder("end!");
+        StringBuilder finalState = new StringBuilder(wasCancelled ? "stopped" : "end!");
         if (hasVulnerability) finalState.append(" ✔");
         if (hasHttp500) finalState.append(" 𝟓");
         if (hasErrorPattern) finalState.append(" Err");
@@ -719,9 +802,24 @@ public class SqlInjectionScanner implements HttpHandler, ContextMenuItemsProvide
     }
 
     /**
-     * 清空所有数据
+     * 取消所有正在运行和排队中的扫描任务，立即中断线程
+     */
+    public void cancelAllTasks() {
+        // shutdownNow() 会向所有运行中的线程发送 interrupt，并清空等待队列
+        scanExecutor.shutdownNow();
+        // 重建线程池，使后续任务可以正常提交
+        scanExecutor = createScanExecutor();
+        // 重置进度计数
+        totalPayloads.set(0);
+        completedPayloads.set(0);
+        notifyProgressChanged();
+    }
+
+    /**
+     * 清空所有数据（同时取消正在运行的任务）
      */
     public void clearAll() {
+        cancelAllTasks();
         scanTasks.clear();
         allResults.clear();
         synchronized (scannedRequestCache) {

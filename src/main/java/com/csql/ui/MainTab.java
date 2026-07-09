@@ -86,6 +86,11 @@ public class MainTab implements SqlInjectionScanner.DataChangeListener {
     private JTextArea logTextArea;
 
     /**
+     * 配置面板（持有引用以便更新进度条）
+     */
+    private ConfigPanel configPanel;
+
+    /**
      * 左侧垂直分割面板（用于同步右侧分隔线位置）
      */
     private JSplitPane leftVerticalSplit;
@@ -304,8 +309,8 @@ public class MainTab implements SqlInjectionScanner.DataChangeListener {
      * 构建基础设置标签页
      */
     private JSplitPane buildBaseSettingsTab() {
-        // 使用 ConfigPanel 构建设置面板
-        ConfigPanel configPanel = new ConfigPanel(config, scanner, this::appendLog);
+        // 使用 ConfigPanel 构建设置面板（保存引用以便更新进度条）
+        configPanel = new ConfigPanel(config, scanner, this::appendLog);
 
         // 日志面板
         JPanel logPanel = buildLogPanel();
@@ -641,5 +646,15 @@ public class MainTab implements SqlInjectionScanner.DataChangeListener {
     @Override
     public void onLogMessage(String message) {
         appendLog(message);
+    }
+
+    /**
+     * 进度变更回调
+     */
+    @Override
+    public void onProgressChanged(int completed, int total) {
+        if (configPanel != null) {
+            configPanel.updateProgress(completed, total);
+        }
     }
 }

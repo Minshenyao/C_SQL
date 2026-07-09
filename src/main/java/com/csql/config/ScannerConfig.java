@@ -119,12 +119,12 @@ public class ScannerConfig {
     // ==================== 配置文件路径 ====================
 
     /**
-     * 配置文件目录：~/.config/
+     * 配置文件目录：~/.config/C_SQL/
      */
-    private static final Path CONFIG_DIR = Paths.get(System.getProperty("user.home"), ".config");
+    private static final Path CONFIG_DIR = Paths.get(System.getProperty("user.home"), ".config", "C_SQL");
 
     /**
-     * 配置文件路径：~/.config/C_SQL_Config.yaml
+     * 配置文件路径：~/.config/C_SQL/C_SQL_Config.yaml
      */
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("C_SQL_Config.yaml");
 
@@ -299,8 +299,16 @@ public class ScannerConfig {
      * 包含常见的第三方服务和社交媒体平台
      */
     private static final String DEFAULT_BLACKLIST_DOMAINS =
-            "google-analytics.com,googletagmanager.com,analytics.google.com," +
-            "doubleclick.net,googlesyndication.com,googleadservices.com," +
+            // Google 全系
+            "google.com,googleapis.com,gstatic.com,googleusercontent.com," +
+            "google-analytics.com,googletagmanager.com,googletagservices.com," +
+            "analytics.google.com,doubleclick.net,googlesyndication.com," +
+            "googleadservices.com,recaptcha.net," +
+            // Microsoft 全系
+            "microsoft.com,microsoftonline.com,clarity.ms,live.com,msn.com,bing.com," +
+            // Apple
+            "apple.com,icloud.com,cdn-apple.com,mzstatic.com," +
+            // 社交媒体
             "twitter.com,t.co,twimg.com," +
             "facebook.com,fb.com,fbcdn.net," +
             "youtube.com,ytimg.com,googlevideo.com," +
@@ -309,15 +317,39 @@ public class ScannerConfig {
             "tiktok.com,tiktokcdn.com," +
             "pinterest.com,pinimg.com," +
             "reddit.com,redd.it,redditstatic.com," +
+            "snap.com,snapchat.com," +
+            "vimeo.com,vimeocdn.com," +
+            "twitch.tv,twitchapps.com,jtvnw.net," +
+            // 翻译服务
             "translate.google.com,translate.googleapis.com," +
-            "bing.com/translator,microsofttranslator.com," +
-            "yandex.com/translate,deepl.com," +
+            "microsofttranslator.com,deepl.com," +
+            // CDN 服务
             "cloudflare.com,cloudflareinsights.com," +
             "jsdelivr.net,cdnjs.cloudflare.com,unpkg.com," +
+            "akamaized.net,akamaihd.net,akamaitechnologies.com," +
+            "fastly.net,stackpathcdn.com,bootstrapcdn.com," +
+            // 代码托管
             "github.com,githubusercontent.com,github.io," +
+            // 博客/CMS
             "gravatar.com,wp.com,wordpress.com," +
             "disqus.com,disquscdn.com," +
-            "snap.com,snapchat.com";
+            // 行为分析/监控
+            "hotjar.com,fullstory.com,mixpanel.com,segment.com," +
+            "newrelic.com,nr-data.net,sentry.io,rollbar.com,bugsnag.com," +
+            // 在线客服组件
+            "intercom.io,intercomcdn.com,intercom.com," +
+            "zendesk.com,zendeskcdn.com,tawk.to,drift.com," +
+            // 支付SDK
+            "stripe.com,paypal.com,paypalobjects.com,braintreegateway.com," +
+            // 广告联盟
+            "taboola.com,outbrain.com,criteo.com,adnxs.com," +
+            "pubmatic.com,rubiconproject.com,moatads.com," +
+            // 国内常见第三方
+            "baidu.com,bdstatic.com," +
+            "qq.com,qpic.cn,qlogo.cn,gtimg.com," +
+            "weibo.com,sinaimg.cn," +
+            "alicdn.com,aliyun.com," +
+            "zhihu.com,zhimg.com";
 
     /**
      * 需要跳过扫描的静态文件扩展名
@@ -451,7 +483,7 @@ public class ScannerConfig {
             try (Writer writer = new FileWriter(CONFIG_FILE.toFile())) {
                 // 写入文件头注释
                 writer.write("# C_SQL 配置文件\n");
-                writer.write("# 位置: ~/.config/C_SQL_Config.yaml\n");
+                writer.write("# 位置: ~/.config/C_SQL/C_SQL_Config.yaml\n");
                 writer.write("# \n");
                 writer.write("# payloads: 自定义 SQL 注入 Payload 列表\n");
                 writer.write("# error_patterns: 自定义报错关键词列表（支持正则表达式）\n");

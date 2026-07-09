@@ -17,6 +17,7 @@ import java.util.function.Consumer;
  * - 监控设置
  * - 域名过滤
  * - 请求延迟
+ * - 扫描进度条
  *
  * @author C_SQL Team
  * @version 2.0.0
@@ -37,6 +38,11 @@ public class ConfigPanel {
      * 主面板组件
      */
     private final JPanel mainPanel;
+
+    /**
+     * 扫描进度条
+     */
+    private JProgressBar progressBar;
 
     /**
      * 构造函数
@@ -88,6 +94,8 @@ public class ConfigPanel {
             if (config.isPluginEnabled()) {
                 config.setPluginEnabled(false);
                 toggleButton.setText("启动插件");
+                // 关闭插件时立即中断所有正在运行和排队的扫描任务
+                scanner.cancelAllTasks();
             } else {
                 config.setPluginEnabled(true);
                 toggleButton.setText("关闭插件");
@@ -276,6 +284,17 @@ public class ConfigPanel {
         // 初始化延迟 UI 状态
         updateDelayUi.run();
 
+        // 扫描进度条
+        progressBar = new JProgressBar(0, 100);
+        progressBar.setStringPainted(true);
+        progressBar.setString("空闲");
+        progressBar.setValue(0);
+        JPanel progressPanel = new JPanel(new BorderLayout(0, 2));
+        progressPanel.add(new JLabel("扫描进度:"), BorderLayout.NORTH);
+        progressPanel.add(progressBar, BorderLayout.CENTER);
+        progressPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
+        progressPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
         // 组装面板
         panel.add(infoPanel);
         panel.add(Box.createVerticalStrut(5));
@@ -292,7 +311,28 @@ public class ConfigPanel {
         panel.add(listModePanel);
         panel.add(Box.createVerticalStrut(10));
         panel.add(delayPanel);
+        panel.add(Box.createVerticalStrut(5));
+        panel.add(progressPanel);
 
         return panel;
+    }
+
+    /**
+     * 更新扫描进度条显示
+     *
+     * @param completed 已完成的 Payload 数
+     * @param total     总 Payload 数
+     */
+    public void updateProgress(int completed, int total) {
+        SwingUtilities.invokeLater(() -> {
+            if (total <= 0) {
+                progressBar.setValue(0);
+                progressBar.setString("空闲");
+            } else {
+                int percent = (int) (completed * 100.0 / total);
+                progressBar.setValue(percent);
+                progressBar.setString(completed + " / " + total);
+            }
+        });
     }
 }
